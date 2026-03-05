@@ -1,0 +1,15 @@
+services:
+  interactive:
+    build: .
+    volumes:
+      - .:/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - YOLO_VERBOSE=False
+    working_dir: /app
