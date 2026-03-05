@@ -1,0 +1,12 @@
+[project]
+name = "poses-from-rcpd"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pandas>=3.0.1",
+    "tqdm>=4.67.3",
+    "ultralytics>=8.4.21",
+    "wget>=3.2",
+]
