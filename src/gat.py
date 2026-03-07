@@ -11,16 +11,18 @@ import pandas as pd
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix
 
-EPOCHS      = 200
-LR          = 1e-3
-WEIGHT_DECAY= 5e-4
-BATCH_SIZE  = 32
+EPOCHS      = 60
+LR          = 3.8e-4
+WEIGHT_DECAY= 1.4e-5
+BATCH_SIZE  = 8
 N_FOLDS     = 5
-HIDDEN_DIM  = 16
-HEADS       = 4
-DROPOUT     = 0.3
-NUM_CLASSES = 2
-SEED        = 42
+HIDDEN_DIM  = 64
+HEADS       = 8
+DROPOUT     = 0.2
+NUM_CLASSES   = 2
+NUM_KEYPOINTS = 17   # Nose, L/R Eye, L/R Ear, L/R Shoulder, L/R Elbow, L/R Wrist, L/R Hip, L/R Knee, L/R Ankle
+KP_EMB_DIM    = 16
+SEED          = 42
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(SEED)
@@ -44,12 +46,14 @@ def setup_logging():
 
 class GAT(nn.Module):
     def __init__(self, in_channels: int, hidden_dim: int, heads: int,
-                 out_channels: int, dropout: float = 0.6):
+                 out_channels: int, dropout: float = 0.6,
+                 num_keypoints: int = NUM_KEYPOINTS, kp_emb_dim: int = KP_EMB_DIM):
         super().__init__()
         self.dropout = dropout
-        self.conv1 = GATv2Conv(in_channels, hidden_dim, heads=heads, dropout=dropout)
-        self.conv2 = GATv2Conv(hidden_dim * heads, hidden_dim, heads=1,
-                               concat=False, dropout=dropout)
+        # Learnable embedding for each of the 17 keypoint types (semantic identity)
+        self.keypoint_emb = nn.Embedding(num_keypoints, kp_emb_dim)
+        self.conv1 = GATv2Conv(in_channels + kp_emb_dim, hidden_dim, heads=heads, dropout=dropout)
+        self.conv2 = GATv2Conv(hidden_dim * heads, hidden_dim, heads=1, dropout=dropout)
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.ELU(),
@@ -62,6 +66,10 @@ class GAT(nn.Module):
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
+        # Keypoint type: nodes within each person are stored in fixed order
+        # (Nose → … → Right Ankle), so node_idx % 17 gives the semantic keypoint ID.
+        kp_ids = torch.arange(x.size(0), device=x.device) % self.keypoint_emb.num_embeddings
+        x = torch.cat([x, self.keypoint_emb(kp_ids)], dim=-1)  # [N, in_channels + kp_emb_dim]
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = F.elu(self.conv1(x, edge_index))
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -151,11 +159,20 @@ def run_kfold(dataset: list[Data], labels: np.ndarray):
         model     = GAT(in_channels, HIDDEN_DIM, HEADS, NUM_CLASSES, DROPOUT).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=LR,
                                      weight_decay=WEIGHT_DECAY)
-        criterion = nn.CrossEntropyLoss()
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=EPOCHS, eta_min=1e-6
+        )
+
+        train_labels = labels[train_idx]
+        neg, pos     = (train_labels == 0).sum(), (train_labels == 1).sum()
+        class_weights = torch.tensor([1.0 / neg, 1.0 / pos], dtype=torch.float32).to(device)
+        class_weights = class_weights / class_weights.sum()   # normalise
+        criterion = nn.CrossEntropyLoss(weight=class_weights)
 
         for epoch in range(1, EPOCHS + 1):
             loss = train_epoch(model, train_loader, optimizer, criterion)
-            if epoch % 20 == 0 or epoch == 1:
+            scheduler.step()
+            if epoch % 4 == 0 or epoch == 1:
                 acc, f1, auc, _ = evaluate(model, val_loader)
                 logger.info(f"Epoch {epoch:>3d}  loss={loss:.4f}  "
                             f"val_acc={acc:.4f}  val_f1={f1:.4f}  val_auc={auc:.4f}")
