@@ -1,5 +1,6 @@
 # Produce torch geometric graph data from the pose npz.
 import numpy as np
+import torch
 from torch_geometric.data import Data
 
 """
@@ -96,3 +97,4 @@ if __name__ == "__main__":
     print(graph_data_list[25].edge_index[:, 17:34])  # Edges for the second person (17 edges per person)
     print("Keypoints for the second person in the 25th image:")
     print(graph_data_list[25].x[17:34])  # Keypoints for the second person (17 keypoints)
+    torch.save(graph_data_list, "graph_data.pt")
