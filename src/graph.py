@@ -67,16 +67,17 @@ def pose_to_graph_data(poses_file) -> list[Data]:
     poses_file = np.load(poses_file, allow_pickle=True)
     poses = poses_file['poses']
     xyv = poses.item()["poses_data"]
+    confidence = poses.item()["poses_conf"]
 
     graph_data_list = []
-    for image in xyv:
+    for image,conf_image  in zip(xyv, confidence):
         # One graph per image with all skeletons in that image
         edges_guide_inst = edges_guide.copy()  # Copy the guide for each image
         edge_index = []
         keypoints = []
-        for person in image:
-            for keypoint in person:
-                keypoints.append(keypoint)
+        for person, conf_person in zip(image, conf_image):
+            for keypoint, conf_keypoint in zip(person, conf_person):
+                keypoints.append(np.concatenate((keypoint, [conf_keypoint])))  # Append confidence to the keypoint data
             for edge in edges_guide_inst:
                 edge_index.append(edge.copy())  # Append a copy of the edge
             edges_guide_inst += 17  # Shift the guide for the next person (17 keypoints per person)
@@ -88,13 +89,12 @@ def pose_to_graph_data(poses_file) -> list[Data]:
     return graph_data_list
 
 if __name__ == "__main__":
-    graph_data_list = pose_to_graph_xy("poses.npz")
+    graph_data_list = pose_to_graph_data("poses.npz")
     print(f"Generated {len(graph_data_list)} graph data objects.")
     print(graph_data_list[0])  # Print the first graph data for verification
     print(graph_data_list[25])  # Print the first graph data for verification
-    # print the edges for the second person in the 25th image
     print("Edges for the second person in the 25th image:")
-    print(graph_data_list[25].edge_index[:, 17:34])  # Edges for the second person (17 edges per person)
+    print(graph_data_list[25].edge_index)
     print("Keypoints for the second person in the 25th image:")
-    print(graph_data_list[25].x[17:34])  # Keypoints for the second person (17 keypoints)
+    print(graph_data_list[25].x)
     torch.save(graph_data_list, "graph_data.pt")
